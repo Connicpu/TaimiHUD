@@ -2,9 +2,11 @@ use {
     super::{
         dx11::{perspective_input_data::PERSPECTIVEINPUTDATA, InstanceBufferData, RenderBackend},
         object::{ObjectBacking, ObjectLoader},
+        pack::Pack,
+        render_list::{MapFrustum, RenderList},
     },
     crate::{
-        space::resources::ObjFile,
+        space::{pack::loader::DirectoryLoader, resources::ObjFile},
         timer::{PhaseState, RotationType, TimerFile, TimerMarker},
     },
     anyhow::anyhow,
@@ -77,6 +79,9 @@ pub struct Engine {
 
     // ECS stuff
     pub world: World,
+
+    test_pack: Pack,
+    render_list: Option<RenderList>,
 }
 
 impl Engine {
@@ -103,6 +108,10 @@ impl Engine {
 
         schedule.add_systems(handle_marker_timings);
 
+        let test_pack = Pack::load(DirectoryLoader::new(
+            addon_dir.join("markers/tw_ALL_IN_ONE"),
+        ))?;
+
         let mut engine = Engine {
             model_files,
             receiver,
@@ -112,6 +121,8 @@ impl Engine {
             world,
             associated_entities: Default::default(),
             phase_states: Default::default(),
+            test_pack,
+            render_list: None,
         };
 
         if let Some(backing) = engine.object_kinds.get("Cat") {
@@ -219,6 +230,7 @@ impl Engine {
         backend.perspective_handler.set(&device_context, slot);
         backend.depth_handler.setup(&device_context);
         backend.blending_handler.set(&device_context);
+        let pdata = PERSPECTIVEINPUTDATA.get().unwrap().load();
         let mut query = self.world.query::<(&mut Render, &Position)>();
         for (_k, c) in &query
             .iter(&self.world)
@@ -228,7 +240,6 @@ impl Engine {
             let slice = itery.next().ok_or(anyhow!("empty slice!"))?;
             let (r, p) = slice;
             if !r.disabled {
-                let pdata = PERSPECTIVEINPUTDATA.get().unwrap().load();
                 let rot = match r.rotation {
                     RotationType::Billboard => {
                         let mark2d = (p.0.xz() - pdata.pos.xz()).to_angle();
@@ -255,6 +266,19 @@ impl Engine {
                     .collect();
                 r.backing
                     .set_and_draw(slot, &backend.device, &device_context, &ibd)?;
+            }
+        }
+        if let Some(render_list) = &mut self.render_list {
+            let frustum = MapFrustum::from_camera_data(
+                &pdata,
+                display_size[0] / display_size[1],
+                0.1,
+                1000.0,
+            );
+            let cam_origin = pdata.pos.into();
+            let cam_dir = pdata.front.into();
+            for entity in render_list.get_entities_for_drawing(cam_origin, cam_dir, &frustum) {
+                // TODO: Draw.
             }
         }
         Ok(())
